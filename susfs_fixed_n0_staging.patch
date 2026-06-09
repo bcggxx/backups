@@ -1,0 +1,61 @@
+diff --git a/fs/open.c b/fs/open.c
+index b04bd84451ae..eb88a47f8462 100644
+--- a/fs/open.c
++++ b/fs/open.c
+@@ -1171,8 +1171,26 @@ long do_sys_open(int dfd, const char __user *filename, int flags, umode_t mode)
+ 		return PTR_ERR(tmp);
+ 
+ 	fd = get_unused_fd_flags(flags);
++#ifdef CONFIG_KSU_SUSFS_OPEN_REDIRECT
++retry:
++#endif // #ifdef CONFIG_KSU_SUSFS_OPEN_REDIRECT
+ 	if (fd >= 0) {
+ 		struct file *f = do_filp_open(dfd, tmp, &op);
++#ifdef CONFIG_KSU_SUSFS_OPEN_REDIRECT
++		if (!is_inode_open_redirect && f && !IS_ERR(f)) {
++			struct inode *inode = file_inode(f);
++			if (SUSFS_IS_INODE_OPEN_REDIRECT_WITHOUT_UID_CHECK(inode)) {
++				fake_filename = susfs_open_redirect_spoof_do_sys_openat(inode);
++				if (fake_filename && !IS_ERR(fake_filename)) {
++					is_inode_open_redirect = true;
++					filp_close(f, NULL);
++					putname(tmp);
++					tmp = fake_filename;
++					goto retry;
++				}
++			}
++		}
++#endif // #ifdef CONFIG_KSU_SUSFS_OPEN_REDIRECT
+ 		if (IS_ERR(f) && !libperfmgr_redirect(&f, dfd, tmp, &op, flags)) {
+ 			put_unused_fd(fd);
+ 			fd = PTR_ERR(f);
+diff --git a/fs/proc/task_mmu.c b/fs/proc/task_mmu.c
+index dcbbac2ce081..9c6c9c7b44bc 100644
+--- a/fs/proc/task_mmu.c
++++ b/fs/proc/task_mmu.c
+@@ -19,6 +19,9 @@
+ #include <linux/shmem_fs.h>
+ #include <linux/uaccess.h>
+ #include <linux/pkeys.h>
++#if defined(CONFIG_KSU_SUSFS_SUS_KSTAT) || defined(CONFIG_KSU_SUSFS_SUS_MAP) || defined(CONFIG_KSU_SUSFS_OPEN_REDIRECT)
++#include <linux/susfs_def.h>
++#endif // #if defined(CONFIG_KSU_SUSFS_SUS_KSTAT) || defined(CONFIG_KSU_SUSFS_SUS_MAP) || defined(CONFIG_KSU_SUSFS_OPEN_REDIRECT)
+ 
+ #include <asm/elf.h>
+ #include <asm/tlb.h>
+@@ -1674,7 +1677,15 @@ static ssize_t pagemap_read(struct file *file, char __user *buf,
+ 		ret = down_read_killable(&mm->mmap_sem);
+ 		if (ret)
+ 			goto out_free;
++#ifdef CONFIG_KSU_SUSFS_SUS_MAP
++		vma = find_vma(mm, start_vaddr);
++		if (vma && vma->vm_file && SUSFS_IS_INODE_SUS_MAP(file_inode(vma->vm_file)))
++			goto bypass_orig_flow;
++#endif // #ifdef CONFIG_KSU_SUSFS_SUS_MAP
+ 		ret = walk_page_range(mm, start_vaddr, end, &pagemap_ops, &pm);
++#ifdef CONFIG_KSU_SUSFS_SUS_MAP
++bypass_orig_flow:
++#endif // #ifdef CONFIG_KSU_SUSFS_SUS_MAP
+ 		up_read(&mm->mmap_sem);
+ 		start_vaddr = end;
+ 
